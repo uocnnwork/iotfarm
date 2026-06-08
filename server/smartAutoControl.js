@@ -257,8 +257,8 @@ export async function runSmartAutoControl(sensorData) {
   if (soilStatus === "low") {
     await sendPumpMistCommand(pumpId, true);
     autoActiveDevices.add(pumpId);
-  } else if (soilStatus !== null) {
-    // trong ngưỡng hoặc cao → tắt bơm
+  } else {
+    // trong ngưỡng hoặc cao → tắt bơm nếu đang auto-active
     if (autoActiveDevices.has(pumpId)) {
       await sendPumpMistCommand(pumpId, false);
       autoActiveDevices.delete(pumpId);
@@ -269,7 +269,7 @@ export async function runSmartAutoControl(sensorData) {
   if (humidStatus === "low") {
     await sendPumpMistCommand(mistId, true);
     autoActiveDevices.add(mistId);
-  } else if (humidStatus !== null) {
+  } else {
     if (autoActiveDevices.has(mistId)) {
       await sendPumpMistCommand(mistId, false);
       autoActiveDevices.delete(mistId);
@@ -293,7 +293,7 @@ export async function runSmartAutoControl(sensorData) {
       await sendFanCommand(0);
       autoActiveDevices.delete("fan");
     }
-  } else if (tempStatus !== null) {
+  } else {
     // Trong ngưỡng → tắt cả quạt và LED nếu đang auto-active
     if (autoActiveDevices.has("fan")) {
       await sendFanCommand(0);
