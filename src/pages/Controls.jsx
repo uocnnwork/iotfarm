@@ -249,13 +249,16 @@ function DeviceControlCard({
         <div className="mt-2 border-t pt-1">
           <div className="flex flex-col gap-0 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
 
-            {/* LED/Fan: slider thay thế switch, chỉ ở manual */}
-            {isSliderDevice && isManual ? (
+            {/* LED/Fan: slider luôn hiển thị (readonly khi auto) */}
+            {isSliderDevice ? (
               <div className="flex flex-col gap-2 py-2 lg:flex-1">
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
                     <Power className="h-3.5 w-3.5 text-muted-foreground" />
                     {sliderLabel}
+                    {!isManual && (
+                      <span className="ml-1 rounded px-1 py-0.5 text-[10px] font-semibold bg-blue-100 text-blue-700">Tự động</span>
+                    )}
                   </span>
                   <span className={cn('text-xs font-semibold tabular-nums', sliderColor)}>
                     {sliderValue}%
@@ -268,15 +271,15 @@ function DeviceControlCard({
                     max={100}
                     step={1}
                     value={sliderValue}
-                    disabled={!device || isDevicePending || sliderPending}
-                    onChange={(e) => sliderOnChange(Number(e.target.value))}
-                    onMouseUp={(e) => sliderOnCommit(Number(e.target.value))}
-                    onTouchEnd={(e) => sliderOnCommit(Number(e.target.value))}
-                    className={cn('h-2 w-full cursor-pointer disabled:cursor-not-allowed disabled:opacity-50', sliderAccent)}
+                    disabled={!device || isDevicePending || sliderPending || !isManual}
+                    onChange={(e) => isManual && sliderOnChange(Number(e.target.value))}
+                    onMouseUp={(e) => isManual && sliderOnCommit(Number(e.target.value))}
+                    onTouchEnd={(e) => isManual && sliderOnCommit(Number(e.target.value))}
+                    className={cn('h-2 w-full disabled:cursor-not-allowed disabled:opacity-60', isManual ? 'cursor-pointer' : 'cursor-default', sliderAccent)}
                   />
                 </div>
               </div>
-            ) : !isSliderDevice ? (
+            ) : (
               <div className="flex items-center justify-between gap-3 py-2 lg:flex-1">
                 <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
                   <Power className="h-3.5 w-3.5 text-muted-foreground" />
@@ -284,12 +287,12 @@ function DeviceControlCard({
                 </span>
                 <Switch
                   checked={isOn}
-                  onCheckedChange={(checked) => onToggle(device, deviceId, checked)}
-                  disabled={!device || isDevicePending}
+                  onCheckedChange={(checked) => isManual && onToggle(device, deviceId, checked)}
+                  disabled={!device || isDevicePending || !isManual}
                   className="scale-90"
                 />
               </div>
-            ) : null}
+            )}
 
             <div className="flex items-center justify-between gap-2 border-t py-2 lg:flex-1 lg:border-t-0 lg:py-2">
               <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
@@ -560,11 +563,20 @@ export default function Controls() {
     fanSpeedMutation.mutate(percent);
   };
 
+  const ledDevice = devices.find((d) => matchesDeviceId(d, 'led'));
+  const fanDevice = devices.find((d) => matchesDeviceId(d, 'fan'));
+
+  // Đồng bộ ledBrightness/fanSpeed từ server (ưu tiên server, fallback sessionStorage)
+  const serverLedBrightness = ledDevice?.led_brightness ?? null;
+  const serverFanSpeed = fanDevice?.fan_speed ?? null;
+  const effectiveLedBrightness = serverLedBrightness !== null ? serverLedBrightness : ledBrightness;
+  const effectiveFanSpeed = serverFanSpeed !== null ? serverFanSpeed : fanSpeed;
+
   const configuredDevices = DEVICE_IDS.map((deviceId) => devices.find((d) => matchesDeviceId(d, deviceId)));
   const activeCount = configuredDevices.filter((device) => {
     if (!device) return false;
-    if (device.device_id === 'led' || device.name === 'led') return ledBrightness > 0;
-    if (device.device_id === 'fan' || device.name === 'fan') return fanSpeed > 0;
+    if (device.device_id === 'led' || device.name === 'led') return effectiveLedBrightness > 0;
+    if (device.device_id === 'fan' || device.name === 'fan') return effectiveFanSpeed > 0;
     return device?.is_on;
   }).length;
   const autoCount = configuredDevices.filter((device) => device?.mode === 'auto').length;
@@ -645,11 +657,11 @@ export default function Controls() {
                     canControl={canControl}
                     onToggle={handleToggleDevice}
                     onModeChange={handleModeChange}
-                    ledBrightness={ledBrightness}
+                    ledBrightness={effectiveLedBrightness}
                     onLedBrightnessChange={handleLedBrightnessChange}
                     onLedBrightnessCommit={handleLedBrightnessCommit}
                     isLedBrightnessPending={ledBrightnessMutation.isPending}
-                    fanSpeed={fanSpeed}
+                    fanSpeed={effectiveFanSpeed}
                     onFanSpeedChange={handleFanSpeedChange}
                     onFanSpeedCommit={handleFanSpeedCommit}
                     isFanSpeedPending={fanSpeedMutation.isPending}

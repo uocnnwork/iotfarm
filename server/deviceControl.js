@@ -162,8 +162,8 @@ export async function publishLedBrightness({ percent }) {
     throw error;
   }
 
-  // ESP32 expects plain string e.g. "50"
   await publishMqtt(LED_BRIGHTNESS_TOPIC, String(value), { qos: 1 });
+  await updateDeviceByName("led", { led_brightness: value, is_on: value > 0 });
 
   return {
     topic: LED_BRIGHTNESS_TOPIC,
@@ -185,6 +185,7 @@ export async function publishFanSpeed({ percent }) {
   }
 
   await publishMqtt(FAN_SPEED_TOPIC, String(value), { qos: 1 });
+  await updateDeviceByName("fan", { fan_speed: value, is_on: value > 0 });
 
   return {
     topic: FAN_SPEED_TOPIC,

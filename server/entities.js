@@ -145,6 +145,8 @@ function toLegacyDeviceState(device) {
     mode: device.mode,
     online: device.online,
     is_connected: device.online,
+    led_brightness: device.led_brightness ?? 0,
+    fan_speed: device.fan_speed ?? 0,
     last_seen: device.last_seen_at,
     last_seen_at: device.last_seen_at,
     created_date: device.created_at,

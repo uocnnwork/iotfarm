@@ -78,6 +78,14 @@ function getUpdateFields(data = {}, { allowName = false } = {}) {
   if (hasOwn(data, "last_seen_at") || hasOwn(data, "last_seen")) {
     fields.push(["last_seen_at", normalizeLastSeenAt(data)]);
   }
+  if (hasOwn(data, "led_brightness")) {
+    const v = Math.round(Number(data.led_brightness));
+    fields.push(["led_brightness", Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0]);
+  }
+  if (hasOwn(data, "fan_speed")) {
+    const v = Math.round(Number(data.fan_speed));
+    fields.push(["fan_speed", Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0]);
+  }
 
   return fields;
 }

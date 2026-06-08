@@ -5,6 +5,9 @@ import {
   SENSOR_TOPIC_TO_NODE_ID,
 } from "./mqttTopics.js";
 import { ingestSensorReading } from "./sensorIngestion.js";
+import { runLedAutoLightControl } from "./smartAutoControl.js";
+
+const GATEWAY_SENSOR_TOPIC = process.env.GATEWAY_SENSOR_TOPIC || "ngocUoC/iotfarm/gateway/sensor";
 
 const unsubscribeFns = [];
 
@@ -61,6 +64,20 @@ export function startSensorMqttListener() {
     unsubscribeFns.push(unsub);
     console.log(`[SensorMQTT] Listening on ${topic}`);
   }
+
+  // Lắng nghe light sensor từ gateway để điều khiển LED tự động
+  const unsubGateway = subscribeMqtt(GATEWAY_SENSOR_TOPIC, async (message) => {
+    let payload;
+    try { payload = JSON.parse(message); } catch { return; }
+    const light = Number(payload?.light);
+    if (Number.isFinite(light)) {
+      runLedAutoLightControl(light).catch((err) => {
+        console.error("[SensorMQTT] LED light control error:", err.message);
+      });
+    }
+  });
+  unsubscribeFns.push(unsubGateway);
+  console.log(`[SensorMQTT] Listening on ${GATEWAY_SENSOR_TOPIC} for LED auto control`);
 }
 
 export function stopSensorMqttListener() {

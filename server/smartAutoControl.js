@@ -172,7 +172,7 @@ async function sendFanCommand(percent) {
   }
   try {
     await publishFanSpeed({ percent });
-    await updateDeviceByName("fan", { is_on: percent > 0 });
+    await updateDeviceByName("fan", { is_on: percent > 0, fan_speed: percent });
     markCommandSent("fan");
 
     const log = await createDeviceCommandLog({
@@ -205,7 +205,7 @@ async function sendLedCommand(percent) {
   }
   try {
     await publishLedBrightness({ percent });
-    await updateDeviceByName("led", { is_on: percent > 0 });
+    await updateDeviceByName("led", { is_on: percent > 0, led_brightness: percent });
     markCommandSent("led");
 
     const log = await createDeviceCommandLog({
@@ -237,11 +237,60 @@ async function updateInterval(seconds) {
   }
 }
 
+const LED_LIGHT_TARGET = Number(process.env.LED_LIGHT_TARGET_PERCENT || 80);
+const LED_LIGHT_DEADBAND = Number(process.env.LED_LIGHT_DEADBAND || 5); // ±5% không điều chỉnh
+let lastLedAutoPercent = -1; // track giá trị đã gửi để tránh spam
+
+/**
+ * Điều khiển LED tự động dựa vào cảm biến ánh sáng gateway.
+ * Mục tiêu: giữ light ≈ LED_LIGHT_TARGET%.
+ * Gọi khi nhận gateway sensor data (có field light).
+ */
+export async function runLedAutoLightControl(lightPercent) {
+  if (lightPercent == null || !Number.isFinite(lightPercent)) return;
+
+  const device = await getDeviceByName("led");
+  if (!device || device.mode !== "auto") return;
+  if (isInCooldown("led")) return;
+
+  const error = LED_LIGHT_TARGET - lightPercent;
+
+  // Trong deadband → không làm gì
+  if (Math.abs(error) <= LED_LIGHT_DEADBAND) return;
+
+  // Tính công suất LED mới: nếu thiếu sáng → tăng, nếu thừa → giảm
+  // Dùng điều chỉnh tỷ lệ đơn giản: tăng/giảm theo error, clamp 0-100
+  const currentBrightness = device.led_brightness ?? lastLedAutoPercent ?? 50;
+  const adjustment = Math.round(error * 0.8); // hệ số P=0.8
+  const nextBrightness = Math.max(0, Math.min(100, currentBrightness + adjustment));
+
+  if (Math.abs(nextBrightness - currentBrightness) < 2) return; // thay đổi quá nhỏ
+
+  try {
+    await publishLedBrightness({ percent: nextBrightness });
+    await updateDeviceByName("led", { is_on: nextBrightness > 0, led_brightness: nextBrightness });
+    markCommandSent("led");
+    lastLedAutoPercent = nextBrightness;
+
+    const log = await createDeviceCommandLog({
+      device_id: device.id,
+      device_name: "led",
+      command: nextBrightness > 0 ? "turn_on" : "turn_off",
+      source: "smart_auto",
+      mqtt_published: true,
+      device_confirmed: false,
+    });
+    broadcastRealtime("device_command:new", log);
+    console.log(`[SmartAuto] LED light control: light=${lightPercent}% target=${LED_LIGHT_TARGET}% → LED=${nextBrightness}%`);
+  } catch (err) {
+    console.error("[SmartAuto] LED light control failed:", err.message);
+  }
+}
+
 /**
  * Điểm vào chính: gọi sau mỗi lần nhận sensor data.
  */
-export async function runSmartAutoControl(sensorData) {
-  const nodeId = sensorData?.node_id ?? sensorData?.nodeId;
+export async function runSmartAutoControl(sensorData) {  const nodeId = sensorData?.node_id ?? sensorData?.nodeId;
   if (!nodeId) return;
 
   const thresholds = await getThresholdsForNode(nodeId);
