@@ -373,9 +373,28 @@ export default function Controls() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
-  const [gatewayFrequencySeconds, setGatewayFrequencySeconds] = useState('10');
-  const [ledBrightness, setLedBrightness] = useState(0);
-  const [fanSpeed, setFanSpeed] = useState(0);
+  const [gatewayFrequencySeconds, setGatewayFrequencySeconds] = useState(() => {
+    return sessionStorage.getItem('ctrl_gatewayFreq') || '5';
+  });
+  const [ledBrightness, setLedBrightness] = useState(() => {
+    return Number(sessionStorage.getItem('ctrl_ledBrightness') || 0);
+  });
+  const [fanSpeed, setFanSpeed] = useState(() => {
+    return Number(sessionStorage.getItem('ctrl_fanSpeed') || 0);
+  });
+
+  const handleGatewayFreqChange = (val) => {
+    setGatewayFrequencySeconds(val);
+    sessionStorage.setItem('ctrl_gatewayFreq', val);
+  };
+  const handleLedBrightnessChange = (val) => {
+    setLedBrightness(val);
+    sessionStorage.setItem('ctrl_ledBrightness', val);
+  };
+  const handleFanSpeedChange = (val) => {
+    setFanSpeed(val);
+    sessionStorage.setItem('ctrl_fanSpeed', val);
+  };
   const canControl = user?.role !== 'viewer';
 
   const { data: devices = [] } = useQuery({
@@ -519,8 +538,7 @@ export default function Controls() {
       return;
     }
 
-    const seconds = Number(gatewayFrequencySeconds);
-    if (!Number.isInteger(seconds) || seconds <= 0) {
+    const seconds = Number(gatewayFrequencySeconds);    if (!Number.isInteger(seconds) || seconds <= 0) {
       toast({
         variant: 'destructive',
         title: 'Tần suất không hợp lệ',
@@ -543,7 +561,12 @@ export default function Controls() {
   };
 
   const configuredDevices = DEVICE_IDS.map((deviceId) => devices.find((d) => matchesDeviceId(d, deviceId)));
-  const activeCount = configuredDevices.filter((device) => device?.is_on).length;
+  const activeCount = configuredDevices.filter((device) => {
+    if (!device) return false;
+    if (device.device_id === 'led' || device.name === 'led') return ledBrightness > 0;
+    if (device.device_id === 'fan' || device.name === 'fan') return fanSpeed > 0;
+    return device?.is_on;
+  }).length;
   const autoCount = configuredDevices.filter((device) => device?.mode === 'auto').length;
   const pendingCount = DEVICE_IDS
     .map((deviceId) => commandLogs.find((log) => matchesCommandLog(log, deviceId)))
@@ -595,7 +618,7 @@ export default function Controls() {
         value={gatewayFrequencySeconds}
         isPending={gatewayFrequencyMutation.isPending}
         canControl={canControl}
-        onChange={setGatewayFrequencySeconds}
+        onChange={handleGatewayFreqChange}
         onSubmit={handleGatewayFrequencySubmit}
       />
 
@@ -623,11 +646,11 @@ export default function Controls() {
                     onToggle={handleToggleDevice}
                     onModeChange={handleModeChange}
                     ledBrightness={ledBrightness}
-                    onLedBrightnessChange={setLedBrightness}
+                    onLedBrightnessChange={handleLedBrightnessChange}
                     onLedBrightnessCommit={handleLedBrightnessCommit}
                     isLedBrightnessPending={ledBrightnessMutation.isPending}
                     fanSpeed={fanSpeed}
-                    onFanSpeedChange={setFanSpeed}
+                    onFanSpeedChange={handleFanSpeedChange}
                     onFanSpeedCommit={handleFanSpeedCommit}
                     isFanSpeedPending={fanSpeedMutation.isPending}
                   />

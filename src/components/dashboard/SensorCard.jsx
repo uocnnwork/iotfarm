@@ -3,7 +3,7 @@ import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
 
-export default function SensorCard({ icon: Icon, label, value, unit, color, warning }) {
+export default function SensorCard({ icon: Icon, label, value, unit, color, warning, remedyActive }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -12,7 +12,9 @@ export default function SensorCard({ icon: Icon, label, value, unit, color, warn
     >
       <Card className={cn(
         "relative overflow-hidden p-5 shadow-sm hover:shadow-md transition-shadow duration-300",
-        warning
+        warning && remedyActive
+          ? "border border-yellow-400 bg-yellow-50/40 dark:bg-yellow-900/20 dark:border-yellow-600/50"
+          : warning
           ? "border border-red-400 bg-red-50/40 dark:bg-red-900/20 dark:border-red-600/50"
           : "border border-transparent",
       )}>
@@ -32,9 +34,15 @@ export default function SensorCard({ icon: Icon, label, value, unit, color, warn
           </div>
         </div>
         {warning && (
-          <div className="mt-3 text-xs font-medium text-destructive flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-destructive animate-pulse" />
-            {warning}
+          <div className={cn(
+            "mt-3 text-xs font-medium flex items-center gap-1.5",
+            remedyActive ? "text-yellow-600" : "text-destructive",
+          )}>
+            <div className={cn(
+              "w-1.5 h-1.5 rounded-full animate-pulse",
+              remedyActive ? "bg-yellow-500" : "bg-destructive",
+            )} />
+            {remedyActive ? "Đang khắc phục" : warning}
           </div>
         )}
         <div className={cn(

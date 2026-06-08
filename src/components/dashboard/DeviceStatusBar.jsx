@@ -36,8 +36,17 @@ function ModeBadge({ mode }) {
 function DeviceStatusItem({ device }) {
   const deviceId = device?.device_id ?? device?.id ?? device?.name;
   const definition = getDeviceDefinition(deviceId);
-  const isOn = device?.is_on || false;
   const Icon = deviceIcons[definition?.type] || Droplets;
+
+  // Fan và LED: "bật" khi speed/brightness > 0
+  let isOn = device?.is_on || false;
+  if (deviceId === 'fan') {
+    const stored = Number(sessionStorage.getItem('ctrl_fanSpeed') || 0);
+    isOn = stored > 0 || isOn;
+  } else if (deviceId === 'led') {
+    const stored = Number(sessionStorage.getItem('ctrl_ledBrightness') || 0);
+    isOn = stored > 0 || isOn;
+  }
 
   return (
     <div

@@ -34,7 +34,36 @@ const miniCharts = [
   { title: SENSOR_LABELS.soil_moisture, dataKey: 'soil_moisture', color: '#10b981', unit: '%' },
 ];
 
-// So sánh giá trị hiện tại với ngưỡng của cây, trả về danh sách cảnh báo
+// Map sensor type → device IDs có thể khắc phục (theo node)
+// pump khắc phục soil_moisture, mist khắc phục humidity, fan khắc phục temperature
+function getRemedyDeviceIds(sensorType, nodeId) {
+  if (sensorType === 'soil_moisture') {
+    if (nodeId === 'node1') return ['pump_1'];
+    if (nodeId === 'node2') return ['pump_2'];
+    return ['pump_1', 'pump_2'];
+  }
+  if (sensorType === 'humidity') {
+    if (nodeId === 'node1') return ['mist_1'];
+    if (nodeId === 'node2') return ['mist_2'];
+    return ['mist_1', 'mist_2'];
+  }
+  if (sensorType === 'temperature') return ['fan'];
+  return [];
+}
+
+function isDeviceActive(deviceId, devicesById) {
+  const device = devicesById.get(deviceId);
+  if (!device) return false;
+  if (deviceId === 'fan') {
+    const stored = Number(sessionStorage.getItem('ctrl_fanSpeed') || 0);
+    return stored > 0 || device.is_on;
+  }
+  if (deviceId === 'led') {
+    const stored = Number(sessionStorage.getItem('ctrl_ledBrightness') || 0);
+    return stored > 0 || device.is_on;
+  }
+  return device.is_on || false;
+}
 function getPlantWarnings(latest, profile) {
   if (!profile || !latest) return [];
   const warnings = [];
@@ -125,7 +154,7 @@ function PlantWarningPanel({ profile, warnings, hasData }) {
 }
 
 export default function Dashboard() {
-  const [viewMode, setViewMode] = useState(EXPECTED_SENSOR_NODES[0]);
+  const [viewMode, setViewMode] = useState(DASHBOARD_VIEW_ALL);
   // Mỗi node lưu plantId riêng, không ảnh hưởng nhau
   const [plantByNode, setPlantByNode] = useState(() => {
     try { return JSON.parse(localStorage.getItem('plantByNode') || '{}'); } catch { return {}; }
@@ -199,8 +228,16 @@ export default function Dashboard() {
     refetchInterval: 3000,
   });
 
+  const devicesById = useMemo(() => {
+    const map = new Map();
+    for (const d of devices) {
+      const nameKey = d?.device_id ?? d?.name;
+      if (nameKey) map.set(String(nameKey), d);
+    }
+    return map;
+  }, [devices]);
+
   const { data: alerts = [] } = useQuery({
-    queryKey: ['alerts', 'recent', 10],
     queryFn: () => alertService.listRecent(10),
     refetchOnMount: 'always',
     refetchInterval: 3000,
@@ -277,6 +314,15 @@ export default function Dashboard() {
                 selectedProfile
                   ? (plantWarningMap[sensor.type] ?? null)
                   : getSensorWarning(sensor.type, latest[sensor.type], alertThresholds)
+              }
+              remedyActive={
+                !!(
+                  (selectedProfile
+                    ? plantWarningMap[sensor.type]
+                    : getSensorWarning(sensor.type, latest[sensor.type], alertThresholds)
+                  ) &&
+                  getRemedyDeviceIds(sensor.type, viewMode).some((id) => isDeviceActive(id, devicesById))
+                )
               }
             />
           ))}
