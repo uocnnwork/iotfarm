@@ -3,8 +3,8 @@ import { readBody, sendJson } from "./httpUtils.js";
 import { listAlerts } from "./repositories/alertRepository.js";
 import { listAutomationRules } from "./repositories/automationRepository.js";
 import { listDevices } from "./repositories/deviceRepository.js";
-import { findPlantProfileByMessage } from "./repositories/plantProfileRepository.js";
-import { getLatestSensorReading } from "./repositories/sensorRepository.js";
+import { findPlantProfileByMessage, getPlantProfileById } from "./repositories/plantProfileRepository.js";
+import { getLatestSensorReading, listLatestSensorReadingsByNode } from "./repositories/sensorRepository.js";
 import {
   findUserPlantByMessage,
   getUserPlantById,
@@ -20,65 +20,46 @@ import {
 } from "./deviceControl.js";
 
 const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_MODEL = "gemini-3.1-flash-lite";
+const DEFAULT_MODEL = "gemini-2.5-flash-lite";
 const MAX_MESSAGE_LENGTH = 1200;
 const MAX_HISTORY_MESSAGES = 8;
 const RECENT_ALERT_LOOKBACK_HOURS = 48;
 const CHATBOT_INSTRUCTIONS = `
-Bạn là trợ lý AI cho một hệ thống IoT chăm sóc cây trồng thông minh.
+Bạn là trợ lý AI cho hệ thống IoT nhà kính thông minh GreenHouse.
 
-Mục tiêu chính:
-- Hỗ trợ người dùng theo dõi và chăm sóc từng loại cây trồng.
-- Đưa ra lời khuyên dựa trên dữ liệu cảm biến, loại cây, thiết bị, cảnh báo và luật tự động hóa.
-- Giúp người dùng hiểu tình trạng hiện tại của cây và nên làm gì tiếp theo.
+== DỮ LIỆU CONTEXT ĐƯỢC CUNG CẤP ==
+- latest_sensor: cảm biến mới nhất (của node đang chọn hoặc chung)
+- sensor_by_node: dữ liệu cảm biến chi tiết từng khu (node1=Khu 1, node2=Khu 2), kèm selected_plant_profile là loại cây người dùng đang chọn ở tab Tổng quan cho khu đó
+- devices: danh sách thiết bị với trạng thái (is_on, mode=manual/auto, led_brightness%, fan_speed%)
+- auto_active_devices: các thiết bị đang bật do hệ thống tự động điều khiển
+- unread_alerts: cảnh báo chưa đọc (ưu tiên nhắc trước)
+- recent_alerts: cảnh báo gần 48h
+- unread_alert_count: số cảnh báo chưa đọc
+- automation_rules: các luật tự động hóa đang cấu hình
+- active_user_plants: tất cả cây đang trồng
+- selected_user_plant: cây đang được hỏi (nếu có)
+- plant_profile: ngưỡng phù hợp của cây (nhiệt độ, độ ẩm, ánh sáng...)
 
-Ngữ cảnh hệ thống:
-- Hệ thống có thể có dữ liệu cảm biến như nhiệt độ, độ ẩm đất, độ ẩm không khí, ánh sáng, thời gian đo.
-- Hệ thống có thể có thiết bị như máy bơm, đèn, quạt.
-- Hệ thống có thể có cảnh báo gần đây và luật tự động hóa.
-- Mỗi cây trồng có thể có ngưỡng phù hợp riêng về nhiệt độ, độ ẩm đất, độ ẩm không khí và ánh sáng.
+== NGUYÊN TẮC ==
+1. Luôn dùng dữ liệu thực tế từ context, không bịa số liệu.
+2. Ưu tiên nhắc unread_alerts trước nếu có liên quan.
+3. Nếu auto_active_devices có thiết bị, thông báo hệ thống đang tự xử lý.
+4. Dùng sensor_by_node để trả lời câu hỏi về từng khu cụ thể.
+5. Thiết bị LED: led_brightness% là công suất đèn hiện tại. Fan: fan_speed%.
+6. Chế độ "auto" = hệ thống tự điều khiển; "manual" = người dùng điều khiển tay.
+7. Không khẳng định đã điều khiển thiết bị nếu chưa có xác nhận. Chỉ nói "có thể bấm xác nhận bên dưới".
+8. Trả lời bằng tiếng Việt, thân thiện, ngắn gọn (tối đa 5-6 gạch đầu dòng).
+9. Đơn vị: nhiệt độ °C, độ ẩm KK %, độ ẩm đất %, ánh sáng %.
+10. Khi so sánh với ngưỡng cây: dùng plant_profile (temperature_range, humidity_range, soil_moisture_range).
+11. Nếu không có plant_profile, dùng kiến thức nông nghiệp phổ thông và nói rõ đây là khuyến nghị chung.
+12. Nếu người dùng hỏi "tình hình hiện tại", "tổng quan", hãy tóm tắt: từng khu + chỉ số nổi bật + cảnh báo chưa đọc + thiết bị đang hoạt động.
 
-Nguyên tắc trả lời:
-1. Luôn ưu tiên dữ liệu thực tế được cung cấp trong ngữ cảnh.
-2. Không tự bịa số liệu cảm biến, trạng thái thiết bị, cảnh báo hoặc luật tự động hóa.
-3. Nếu thiếu dữ liệu quan trọng, hãy nói rõ đang thiếu dữ liệu nào.
-4. Nếu người dùng hỏi về một cây cụ thể, hãy tư vấn theo đặc điểm của cây đó.
-5. Nếu có ngưỡng phù hợp của cây, hãy so sánh dữ liệu hiện tại với ngưỡng đó.
-6. Nếu dữ liệu cảm biến bất thường, hãy giải thích ngắn gọn nguyên nhân có thể xảy ra.
-7. Không đưa lời khuyên nguy hiểm như tưới quá nhiều, dùng hóa chất tùy tiện, hoặc can thiệp điện không an toàn.
-8. Khi không chắc chắn, hãy nói "chưa đủ dữ liệu để kết luận chính xác" và đưa ra khuyến nghị an toàn.
-9. Trả lời bằng tiếng Việt.
-10. Văn phong thân thiện, dễ hiểu, ngắn gọn, phù hợp với người dùng phổ thông.
-11. Nếu context có selected_user_plant, hãy hiểu đó là cây/khu vực đang được hỏi và ưu tiên dữ liệu của cây này.
-12. Nếu context có plant_profile_status là "matched_from_user_plant" hoặc "matched_from_database", hãy ưu tiên plant_profile làm nguồn ngưỡng chính.
-13. Nếu plant_profile_status là "not_found_use_general_agriculture_knowledge", hãy tư vấn bằng kiến thức nông nghiệp phổ thông và nói rõ đây là khuyến nghị chung.
-14. Không được nói database có ngưỡng riêng nếu plant_profile là null.
-15. Nếu người dùng hỏi "cây này" nhưng selected_user_plant là null và active_user_plants có nhiều cây, hãy hỏi người dùng chọn cây/khu vực cụ thể.
-16. Dùng đúng đơn vị trong context: nhiệt độ °C, độ ẩm không khí %, độ ẩm đất %, ánh sáng lux.
-17. Khi hiển thị số, làm gọn số nếu phù hợp: viết 800 thay vì 800.00, 28.5 thay vì 28.50.
-18. Chỉ nhắc cảnh báo có trong recent_alerts. Nếu recent_alerts rỗng, không nhắc cảnh báo cũ.
-19. Trả lời ngắn gọn, ưu tiên tối đa 4-6 gạch đầu dòng. Không mở đầu dài dòng nếu không cần.
-20. Nếu cần bật/tắt thiết bị, chỉ nói là "có thể bấm nút xác nhận bên dưới"; không khẳng định đã điều khiển thiết bị.
-
-Cách phân tích:
-- Nếu độ ẩm đất thấp hơn ngưỡng phù hợp: gợi ý tưới nước.
-- Nếu độ ẩm đất cao hơn ngưỡng phù hợp: khuyên không tưới thêm, kiểm tra thoát nước.
-- Nếu nhiệt độ cao hơn ngưỡng phù hợp: khuyên che nắng, tăng thông gió, tránh tưới giữa trưa.
-- Nếu nhiệt độ thấp hơn ngưỡng phù hợp: khuyên giữ ấm hoặc chuyển cây đến nơi phù hợp hơn.
-- Nếu ánh sáng thấp: khuyên đưa cây ra nơi sáng hơn hoặc bật đèn trồng cây nếu có.
-- Nếu ánh sáng quá mạnh: khuyên che nắng nhẹ.
-- Nếu có cảnh báo gần đây: nhắc lại cảnh báo liên quan và đề xuất xử lý.
-- Nếu có thiết bị liên quan đang tắt/mở: có thể gợi ý bật/tắt thiết bị, nhưng không được khẳng định đã điều khiển thiết bị nếu hệ thống chưa thực hiện.
-
-Định dạng câu trả lời nên dùng:
-- Tình trạng hiện tại của cây.
-- Vấn đề chính nếu có.
-- Lời khuyên cụ thể.
-- Lưu ý an toàn hoặc dữ liệu còn thiếu nếu cần.
-- Chỉ nhắc thiết bị hoặc cảnh báo khi liên quan trực tiếp đến câu hỏi.
-
-Ví dụ phong cách trả lời:
-"Độ ẩm đất của cây cà chua hiện đang thấp hơn mức phù hợp, nên cây có thể đang thiếu nước. Bạn nên tưới nhẹ vào sáng sớm hoặc chiều mát, tránh tưới giữa trưa. Nếu sau khi tưới độ ẩm vẫn không tăng, hãy kiểm tra cảm biến hoặc hệ thống tưới."
+== PHÂN TÍCH CHUẨN ==
+- soil_moisture thấp hơn min → đề nghị tưới / kiểm tra bơm
+- humidity thấp hơn min → đề nghị phun sương
+- temperature cao hơn max → đề nghị bật quạt / che nắng
+- temperature thấp hơn min → đề nghị bật đèn / giữ ấm
+- Thiết bị auto + bật → hệ thống đang tự xử lý, không cần thao tác thủ công
 `.trim();
 
 function normalizeMessage(value) {
@@ -144,6 +125,7 @@ function compactSensorReading(reading) {
   if (!reading) return null;
 
   return {
+    node_id: reading.node_id ?? null,
     temperature: toCompactNumber(reading.temperature),
     humidity: toCompactNumber(reading.humidity),
     soil_moisture: toCompactNumber(reading.soil_moisture),
@@ -153,7 +135,7 @@ function compactSensorReading(reading) {
 }
 
 function compactDevice(device) {
-  return {
+  const base = {
     name: device.name,
     type: device.type,
     is_on: device.is_on,
@@ -161,6 +143,9 @@ function compactDevice(device) {
     online: device.online,
     last_seen_at: device.last_seen_at,
   };
+  if (device.name === "led" || device.type === "light") base.led_brightness = device.led_brightness ?? 0;
+  if (device.name === "fan" || device.type === "fan") base.fan_speed = device.fan_speed ?? 0;
+  return base;
 }
 
 function compactAlert(alert) {
@@ -373,7 +358,7 @@ function buildDeviceActions(message, context) {
   return actions.slice(0, 3);
 }
 
-async function getGreenhouseContext(message, plantId) {
+async function getGreenhouseContext(message, plantId, plantByNode = {}) {
   const alertFrom = new Date(Date.now() - RECENT_ALERT_LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
   const selectedUserPlantPromise = plantId ? getUserPlantById(plantId) : findUserPlantByMessage(message);
   const [selectedUserPlantFromRequest, activeUserPlants] = await Promise.all([
@@ -385,13 +370,25 @@ async function getGreenhouseContext(message, plantId) {
 
   const nodeIdFilter = selectedUserPlant?.node_id ? { node_id: selectedUserPlant.node_id } : {};
 
-  const [latestSensor, devices, alerts, automationRules, messagePlantProfile] = await Promise.all([
+  const [latestSensor, latestByNode, devices, alerts, unreadAlerts, automationRules, messagePlantProfile] = await Promise.all([
     getLatestSensorReading(nodeIdFilter),
+    listLatestSensorReadingsByNode(),
     listDevices(),
-    listAlerts({ limit: 5, from: alertFrom, sortBy: "created_at", sortOrder: "desc", ...nodeIdFilter }),
-    listAutomationRules({ limit: 8, sortBy: "created_at", sortOrder: "desc", ...nodeIdFilter }),
+    listAlerts({ limit: 8, from: alertFrom, sortBy: "created_at", sortOrder: "desc", ...nodeIdFilter }),
+    listAlerts({ limit: 5, is_read: false, sortBy: "created_at", sortOrder: "desc" }),
+    listAutomationRules({ limit: 10, sortBy: "created_at", sortOrder: "desc" }),
     findPlantProfileByMessage(message),
   ]);
+
+  // Load plant profiles được chọn trên Dashboard theo từng node
+  const nodeProfileIds = Object.values(plantByNode).filter(Boolean);
+  const nodeProfiles = nodeProfileIds.length > 0
+    ? await Promise.all(nodeProfileIds.map((id) => getPlantProfileById(id)))
+    : [];
+  const nodeProfileMap = {};
+  for (const [nodeId, profileId] of Object.entries(plantByNode)) {
+    if (profileId) nodeProfileMap[nodeId] = nodeProfiles.find((p) => p?.id === profileId) ?? null;
+  }
 
   const plantProfile = selectedUserPlant?.plant_profile || messagePlantProfile;
   const plantProfileStatus = selectedUserPlant?.plant_profile
@@ -400,21 +397,41 @@ async function getGreenhouseContext(message, plantId) {
       ? "matched_from_database"
       : "not_found_use_general_agriculture_knowledge";
 
+  // Gom sensor theo node, kết hợp với profile cây được chọn trên Dashboard
+  const NODE_LABELS = { node1: "Khu 1", node2: "Khu 2" };
+  const sensorByNode = {};
+  for (const reading of latestByNode) {
+    const nid = reading.node_id ?? reading.nodeId;
+    if (!nid) continue;
+    const dashboardProfile = nodeProfileMap[nid] ?? null;
+    // Fallback: tìm trong user_plants nếu không có lựa chọn Dashboard
+    const userPlant = activeUserPlants.find((p) => p.node_id === nid);
+    sensorByNode[nid] = {
+      node_label: NODE_LABELS[nid] ?? nid,
+      sensor: compactSensorReading(reading),
+      selected_plant_profile: dashboardProfile ? compactPlantProfile(dashboardProfile) : null,
+      user_plant: !dashboardProfile && userPlant ? compactUserPlant(userPlant, { includeProfile: true }) : null,
+    };
+  }
+
+  const autoActiveDevices = devices
+    .filter((d) => d.mode === "auto" && d.is_on)
+    .map((d) => d.name);
+
   return {
-    units: {
-      temperature: "°C",
-      humidity: "%",
-      soil_moisture: "%",
-      light: "lux",
-    },
+    units: { temperature: "°C", humidity: "%", soil_moisture: "%", light: "%" },
+    latest_sensor: compactSensorReading(latestSensor),
+    sensor_by_node: sensorByNode,
     selected_user_plant: compactUserPlant(selectedUserPlant),
     user_plant_status: getUserPlantStatus(selectedUserPlant, plantId, activeUserPlants),
-    active_user_plants: activeUserPlants.map((plant) => compactUserPlant(plant, { includeProfile: false })),
+    active_user_plants: activeUserPlants.map((p) => compactUserPlant(p, { includeProfile: false })),
     plant_profile: compactPlantProfile(plantProfile),
     plant_profile_status: plantProfileStatus,
-    latest_sensor: compactSensorReading(latestSensor),
-    devices: devices.slice(0, 20).map(compactDevice),
+    devices: devices.map(compactDevice),
+    auto_active_devices: autoActiveDevices,
     recent_alerts: alerts.map(compactAlert),
+    unread_alert_count: unreadAlerts.length,
+    unread_alerts: unreadAlerts.map(compactAlert),
     recent_alert_window_hours: RECENT_ALERT_LOOKBACK_HOURS,
     automation_rules: automationRules.map(compactAutomationRule),
     generated_at: new Date().toISOString(),
@@ -557,7 +574,8 @@ export async function handleChatbot(req, res, parts) {
 
   const history = normalizeHistory(body.messages);
   const plantId = normalizePlantId(body.plantId ?? body.userPlantId);
-  const greenhouseContext = await getGreenhouseContext(message, plantId);
+  const plantByNode = (body.plantByNode && typeof body.plantByNode === "object") ? body.plantByNode : {};
+  const greenhouseContext = await getGreenhouseContext(message, plantId, plantByNode);
 
   try {
     const reply = await askChatbot({ message, history, greenhouseContext });

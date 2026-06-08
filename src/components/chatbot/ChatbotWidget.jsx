@@ -29,6 +29,10 @@ function toApiMessages(messages) {
     .slice(-8);
 }
 
+function getPlantByNode() {
+  try { return JSON.parse(localStorage.getItem('plantByNode') || '{}'); } catch { return {}; }
+}
+
 export default function ChatbotWidget() {
   const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);
@@ -81,6 +85,7 @@ export default function ChatbotWidget() {
       const result = await appClient.chatbot.sendMessage({
         message: content,
         messages: toApiMessages(messages),
+        plantByNode: getPlantByNode(),
         ...(selectedPlantId !== AUTO_PLANT_VALUE ? { plantId: selectedPlantId } : {}),
       });
 
