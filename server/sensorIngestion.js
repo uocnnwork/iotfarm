@@ -1,5 +1,6 @@
 import { createAlertsForSensorData } from "./alerts.js";
 import { publishAutomationCommand, runAutomationRulesForSensorData } from "./automation.js";
+import { runSmartAutoControl } from "./smartAutoControl.js";
 import { publishSim800lSmsRequest } from "./sim800l.js";
 import { broadcastRealtime } from "./realtime.js";
 import { createSensorReading } from "./repositories/sensorRepository.js";
@@ -61,6 +62,11 @@ async function runSensorSideEffects(sensorData) {
   const now = sensorData.created_date || new Date().toISOString();
   const createdAlerts = await createAlertsForSensorData(sensorData, now);
   const automationCommands = await runAutomationRulesForSensorData(sensorData, now);
+
+  // Smart auto control: tự động bật/tắt thiết bị dựa vào profile cây + ngưỡng
+  runSmartAutoControl(sensorData).catch((err) => {
+    console.error("[SmartAuto] Error during auto control:", err.message);
+  });
 
   return { createdAlerts, automationCommands };
 }
